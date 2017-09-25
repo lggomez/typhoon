@@ -16,9 +16,10 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN 
 package typhoon
 
 import (
-	"github.com/antzucaro/matchr"
 	"go/token"
 	"strings"
+
+	"github.com/antzucaro/matchr"
 )
 
 type Node struct {
@@ -26,6 +27,12 @@ type Node struct {
 	Children map[int]*Node
 	Position *token.Position
 }
+
+type ByNode []*Node
+
+func (a ByNode) Len() int           { return len(a) }
+func (a ByNode) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByNode) Less(i, j int) bool { return a[i].Word < a[j].Word }
 
 func NewNode(word string, position *token.Position) *Node {
 	return &Node{
@@ -64,13 +71,8 @@ func (n *Node) ContainsKey(key int) bool {
 	if n.Children == nil {
 		return false
 	}
-	for k := range n.Children {
-		if k == key {
-			return true
-		}
-
-	}
-	return false
+	_, ok := n.Children[key]
+	return ok
 }
 
 type Tree struct {

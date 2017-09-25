@@ -2,6 +2,7 @@ package typhoon
 
 import (
 	"crypto/sha1"
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -9,8 +10,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 )
+
+// String format placeholder regex
+// Adapted from https://stackoverflow.com/a/29403060
+var formatPlaceholderRegex, _ = regexp.Compile("%(?:\\x25\\x25)|(\\x25(?:(?:[1-9]\\d*)\\$|\\((?:[^\\)]+)\\))?(?:\\+)?(?: )?(?:\\#)?(?:0|'[^$])?(?:-)?(?:\\d+)?(?:\\.(?:\\d+))?(?:[vT%bcdoqxXUeEfFgGsqp]))")
 
 func inspect(fileName string, tree *Tree, queries *[]string) {
 	// Create the AST by parsing src.
@@ -30,6 +37,7 @@ func inspect(fileName string, tree *Tree, queries *[]string) {
 		case *ast.GenDecl:
 			// Ignore import tokens
 			if x.Tok == token.IMPORT {
+				// Capture import token positions to filter literals later on
 				importStartPos = x.Pos()
 				importEndPos = x.End()
 			}
@@ -37,15 +45,18 @@ func inspect(fileName string, tree *Tree, queries *[]string) {
 			if x.Kind == token.STRING {
 				// Prevent duplicates
 				if !inSlice(x.Value, *queries) {
-					if x.Value == "" {
+					// Ignore empty strings and string format placeholder literals
+					if x.Value == "" || (formatPlaceholderRegex.FindString(x.Value) != "" && len(x.Value) <= 5) {
 						return true
 					}
-					// Some import paths may still be here. We filter them by position
+
+					// Some import paths may reach this part. We filter them by position
 					if importStartPos != token.NoPos && importEndPos != token.NoPos {
 						if importStartPos <= x.Pos() && importEndPos >= x.End() {
 							return true
 						}
 					}
+
 					*queries = append(*queries, x.Value)
 					position := fset.Position(n.Pos())
 					tree.Add(x.Value, &position)
@@ -66,13 +77,7 @@ func inSlice(a string, list []string) bool {
 	return false
 }
 
-type ByNode []*Node
-
-func (a ByNode) Len() int           { return len(a) }
-func (a ByNode) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a ByNode) Less(i, j int) bool { return a[i].Word < a[j].Word }
-
-func GetApproximateMatches(tree Tree, queries []string, distance int) map[string][]*Node {
+func GetApproximateMatches(tree Tree, queries []string, distance int) *map[string][]*ResultInfo {
 	results := map[string][]*Node{}
 	matchIndex := map[string]bool{}
 
@@ -88,6 +93,7 @@ func GetApproximateMatches(tree Tree, queries []string, distance int) map[string
 			continue
 		}
 
+		// Index queries with equal matches only once
 		matchDigest := fmt.Sprintf("% x", matchHash.Sum(nil))
 		if _, ok := matchIndex[matchDigest]; !ok {
 			results[query] = matches
@@ -95,7 +101,74 @@ func GetApproximateMatches(tree Tree, queries []string, distance int) map[string
 		}
 	}
 
-	return results
+	/*
+		Results are duplicated via their reciprocals:
+			- query "hello"
+				match in ".../example.go": "Hella"
+			- query "hella"
+				match in ".../example.go": "Hello"
+
+		A last processing step over the results is necessary in order to group these
+	*/
+	groupedResults := groupResults(results)
+
+	return groupedResults
+}
+
+type ResultInfo struct {
+	Node              *Node
+	AssociatedQueries string
+}
+
+type ResultCandidate struct {
+	Query     string
+	NodeWords string
+	Result    []*Node
+}
+
+func groupResults(results map[string][]*Node) *map[string][]*ResultInfo {
+	candidates := &[]*ResultCandidate{}
+
+	for query, nodes := range results {
+		wordAcc := &[]string{}
+		for _, node := range nodes {
+			*wordAcc = append(*wordAcc, node.Word)
+		}
+		sort.Strings(*wordAcc)
+		*candidates = append(*candidates, &ResultCandidate{
+			Query:     query,
+			Result:    results[query],
+			NodeWords: strings.ToLower(strings.Join(*wordAcc, "")),
+		})
+	}
+
+	groupedResults := removeDuplicates(candidates)
+	return groupedResults
+}
+
+func removeDuplicates(elements *[]*ResultCandidate) *map[string][]*ResultInfo {
+	groupedResults := map[string][]*ResultInfo{}
+	encountered := map[string]bool{}
+
+	for _, v := range *elements {
+		keys := []string{strings.ToLower(v.Query), v.NodeWords}
+		sort.Strings(keys)
+		compositeKey := strings.Join(keys, "")
+
+		if encountered[compositeKey] == false {
+			encountered[compositeKey] = true
+			groupedResults[v.Query] = []*ResultInfo{}
+
+			for _, result := range v.Result {
+				groupedResults[v.Query] = append(groupedResults[v.Query], &ResultInfo{
+					Node:              result,
+					AssociatedQueries: v.Query + " <-> " + result.Word,
+				})
+			}
+		}
+	}
+
+	return &groupedResults
 }
 
 func IndexSourcesFromPath(pathArgPtr *string) (Tree, []string) {
@@ -120,4 +193,23 @@ func getSourceFiles(path string) []string {
 		return nil
 	})
 	return files
+}
+
+func ParseArgs() (*int, string) {
+	pathArgPtr := flag.String("dir", "", "Path containing the source to analyze. If none, will use os.Getwd()")
+	distanceArgPtr := flag.Int("dist", 2, "Levenshtein-Damerau distance threshold. Default is 2")
+	flag.Parse()
+
+	sourcePath := ""
+	if *pathArgPtr == "" {
+		sourcePath, _ = os.Getwd()
+	} else {
+		sourcePath = *pathArgPtr
+	}
+
+	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
+		println("Invalid argument. A valid directory path is required: " + err.Error())
+	}
+
+	return distanceArgPtr, sourcePath
 }
