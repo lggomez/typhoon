@@ -1,4 +1,4 @@
-package typhoon
+package examples
 
 import (
 	"bytes"
@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
-func main() {
+func main22() {
+	println("asd")
+	println("dsa")
+	println("abecedary")
 	fmt.Println(strings.TrimSpace(string(bytes.ToLower([]byte(time.Now().String())))))
 }

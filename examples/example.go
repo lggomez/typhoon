@@ -1,4 +1,4 @@
-package typhoon
+package examples
 
 func main2() {
 	println("Hello")

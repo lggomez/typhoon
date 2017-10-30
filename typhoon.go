@@ -19,9 +19,12 @@ import (
 // Adapted from https://stackoverflow.com/a/29403060
 var formatPlaceholderRegex, _ = regexp.Compile("%(?:\\x25\\x25)|(\\x25(?:(?:[1-9]\\d*)\\$|\\((?:[^\\)]+)\\))?(?:\\+)?(?: )?(?:\\#)?(?:0|'[^$])?(?:-)?(?:\\d+)?(?:\\.(?:\\d+))?(?:[vT%bcdoqxXUeEfFgGsqp]))")
 
+// Format placeholder threshold for composite string arguments (ie: "-%s-")
+var formatPlaceholderThreshold = 5
+
 func inspect(fileName string, tree *Tree, queries *[]string) {
 	// Create the AST by parsing src.
-	fset := token.NewFileSet() // positions are relative to fset
+	fset := token.NewFileSet() // Positions are relative to fset
 	f, err := parser.ParseFile(fset, fileName, nil, 0)
 	if err != nil {
 		panic(err)
@@ -48,7 +51,7 @@ func inspect(fileName string, tree *Tree, queries *[]string) {
 				// Prevent duplicates
 				if !inSlice(x.Value, *queries) {
 					// Ignore empty strings and string format placeholder literals
-					if x.Value == "" || (formatPlaceholderRegex.FindString(x.Value) != "" && len(x.Value) <= 5) {
+					if x.Value == "" || (formatPlaceholderRegex.FindString(x.Value) != "" && len(x.Value) <= formatPlaceholderThreshold) {
 						return true
 					}
 
