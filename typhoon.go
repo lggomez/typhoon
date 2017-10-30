@@ -37,9 +37,11 @@ func inspect(fileName string, tree *Tree, queries *[]string) {
 		case *ast.GenDecl:
 			// Ignore import tokens
 			if x.Tok == token.IMPORT {
-				// Capture import token positions to filter literals later on
-				importStartPos = x.Pos()
-				importEndPos = x.End()
+				if len(x.Specs) > 1 {
+					// Capture token positions to filter literals in multiline imports
+					importStartPos = x.Pos()
+					importEndPos = x.End()
+				}
 			}
 		case *ast.BasicLit:
 			if x.Kind == token.STRING {
@@ -50,7 +52,7 @@ func inspect(fileName string, tree *Tree, queries *[]string) {
 						return true
 					}
 
-					// Some import paths may reach this part. We filter them by position
+					// Filter literals contained by multiline imports
 					if importStartPos != token.NoPos && importEndPos != token.NoPos {
 						if importStartPos <= x.Pos() && importEndPos >= x.End() {
 							return true
